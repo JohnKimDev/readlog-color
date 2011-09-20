@@ -1,0 +1,174 @@
+#!/usr/bin/python -u
+#
+# readlog - cuts apache log into pieces
+# Pipe apache logs into readlog to selectively display interesting information.
+# 
+# Example: show the access time as Unix epoch and ip addresses
+# 
+# cat /var/log/apache2/access.log | ./readlog --color --columns=date,ip
+# or
+# cat /var/log/apache2/access.log | ./readlog -rc date,ip
+# 
+# See http://github.com/xwz/readlog
+
+import sys
+from optparse import OptionParser
+from log_reader import ApacheReader
+import urlparse
+import cgi
+import datetime
+import time
+
+default_dateformat = '%a %b %d %Y %H:%M:%S'
+
+default_columns = [
+    'ip', 
+    'username', 
+    'ident', 
+    'date', 
+    'tz', 
+    'method',
+    'url',
+    'path', 
+    'query',
+    'fragment',
+    'protocol', 
+    'status', 
+    'size',
+    'referer', 
+    'user-agent', 
+]
+
+def cli_options():
+    parser = OptionParser()
+    parser.add_option("-r", "--color", action="store_true", dest="color", default=False,
+            help="color output by http status codes")
+    parser.add_option("-c", "--columns", dest="columns", 
+            help="comma delimited list of columns, available columns: %s" % ", ".join(default_columns))
+    parser.add_option("-p", "--params", dest="params",
+            help="comma delimited list of query parameter names")
+    parser.add_option("-d", "--date", dest="date",
+            help="date format, default is unixtimestamp")
+    parser.add_option("-f", "--format", dest="format",
+            help="log format, accepts 'common', 'combined' and custom format string")
+    options, args = parser.parse_args()
+    if options.columns:
+        columns = options.columns.split(",")
+    else:
+        columns = []
+    if options.params:
+        params = options.params.split(",")
+    else:
+        params = []
+    if len(params)==0 and len(columns)==0:
+        columns = default_columns
+
+    return columns, params, options.date, options.format, options.color
+    
+def readlog(columns, params, dateformat, logformat, color):
+    if logformat=="common":
+        logformat = ApacheReader.COMMON
+    elif logformat=="combined" or not logformat:
+        logformat = ApacheReader.COMBINED
+
+    for log in ApacheReader(sys.stdin, logformat):
+        log["ip"] = ",".join(log["ips"])
+        if log["time"]:
+            if dateformat=='unix':
+                log["date"] = "%d" % time.mktime(log["time"].timetuple())            
+            elif dateformat:
+                log["date"] = log["time"].strftime(dateformat)
+            else:
+                log["date"] = log["time"].strftime(default_dateformat)
+        url = urlparse.urlparse(log["path"])
+        log["url"] = log["path"]
+        log["path"] = url.path
+        log["query"] = url.query
+        log["fragment"] = url.fragment
+        query = dict(cgi.parse_qsl(url.query, True))
+        info = [log[col] for col in columns if col in log]
+        info = info + [query[param] for param in params if param in query]
+        output = "\t".join(str(i) for i in info)
+        if color==True:            
+            print setcolor(output, log['status'])
+        else:
+            print output
+
+def setcolor(msg, status):
+    FGBLACK = '\033[30m'           #set foreground color to black
+    FGRED = '\033[31m'             #set foreground color to red
+    FGGREEN = '\033[32m'           #set foreground color to green
+    FGYELLOW = '\033[33m'          #set foreground color to yellow
+    FGBLUE = '\033[34m'            #set foreground color to blue
+    FGMAGENTA = '\033[35m'         #set foreground color to magenta (purple)
+    FGCYAN = '\033[36m'            #set foreground color to cyan
+    FGWHITE = '\033[37m'           #set foreground color to white
+    FGDARKGRAY = '\033[1;30m'      #set foreground color to dark gray
+    FGLIGHTRED = '\033[1;31m'      #set foreground color to light red
+    FGLIGHTGREEN = '\033[1;32m'    #set foreground color to light green
+    FGLIGHTYELLOW = '\033[1;33m'   #set foreground color to light yellow
+    FGLIGHTBLUE = '\033[1;34m'     #set foreground color to light blue
+    FGLIGHTMAGENTA = '\033[1;35m'  #set foreground color to light magenta (purple)
+    FGLIGHTCYAN = '\033[1;36m'     #set foreground color to light cyan
+    FGWHITE = '\033[1;37m'         #set foreground color to white
+
+    BGBLACK = '\033[40m'           #set background color to black
+    BGRED = '\033[41m'             #set background color to red
+    BGGREEN = '\033[42m'           #set background color to green
+    BGYELLOW = '\033[43m'          #set background color to yellow
+    BGBLUE = '\033[44m'            #set background color to blue
+    BGMAGENTA = '\033[45m'         #set background color to magenta (purple)
+    BGCYAN = '\033[46m'            #set background color to cyan
+    BGWHITE = '\033[47m'           #set background color to white
+    BGDARKGRAY = '\033[1;40m'      #set background color to dark gray
+    BGLIGHTRED = '\033[1;41m'      #set background color to light red
+    BGLIGHTGREEN = '\033[1;42m'    #set background color to light green
+    BGLIGHTYELLOW = '\033[1;43m'   #set background color to light yellow
+    BGLIGHTBLUE = '\033[1;44m'     #set background color to light blue
+    BGLIGHTMAGENTA = '\033[1;45m'  #set background color to light magenta (purple)
+    BGLIGHTCYAN = '\033[1;46m'     #set background color to light cyan
+
+    BLINK="\033[5m"                 # terminal to blink 
+    NORMAL="\033[m"                 # terminal to normal 
+    UNDERLINE="\033[4m"             # terminal to underline 
+    NOUNDERLINE="\033[24m"          # terminal to cancel underline 
+    REVERSE="\033[7m"               # terminal to reverse video 
+    BOLD="\033[1m"                  #bold
+    ENDC = '\033[0m'
+
+
+    # 1xx INFORMATIONAL     
+    if status < 100 :
+        msg = FGYELLOW + msg + ENDC
+
+    # 2xx SUCCESS
+    elif status < 300 :
+        msg = msg
+   
+    # 304 - cached (not modified)
+    elif status == 304 :
+        msg = FGLIGHTCYAN + msg + ENDC
+
+    # 3xx REDIRECTION
+    elif status < 400 :
+        msg = FGLIGHTBLUE + msg + ENDC
+   
+    # 4xx CLIENT ERROR
+    elif status < 500 :
+        msg = FGRED + msg + ENDC
+
+    # 5xx SERVER ERROR
+    elif status < 600 :
+        msg = BGRED + msg + ENDC
+
+    return msg
+
+
+if __name__ == "__main__":
+    columns, params, dateformat, logformat, color = cli_options()
+    try:
+        readlog(columns, params, dateformat, logformat, color)
+    except KeyboardInterrupt:
+        sys.exit(0)
+    #except (RuntimeError, TypeError, NameError):
+    #    pass
