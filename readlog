@@ -9,7 +9,7 @@
 # or
 # cat /var/log/apache2/access.log | ./readlog -rc date,ip
 # 
-# See http://github.com/xwz/readlog
+# See http://github.com/johnjkim/readlog-color
 
 import sys
 from optparse import OptionParser
